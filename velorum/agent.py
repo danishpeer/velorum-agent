@@ -111,7 +111,6 @@ def get_llm(
         raise ValueError(f"Unsupported provider: {provider}. Supported: {supported}")
     
     config = SUPPORTED_PROVIDERS[provider]
-    
     if api_key is None:
         api_key = os.getenv(config["env_key"])
     
@@ -172,6 +171,30 @@ def get_llm(
         }
         package = package_map.get(provider, f"langchain-{provider}")
         raise ImportError(f"Install with: pip install {package}\nOriginal error: {e}")
+
+
+def resolve_model_string(model: str) -> str:
+    """
+    Resolve a model string to its full 'provider:model_name' format.
+    
+    Args:
+        model: Model string (e.g., "openai", "openai:gpt-4o", "gpt-4o")
+    
+    Returns:
+        Full model string in 'provider:model_name' format
+    """
+    if ":" in model:
+        provider, model_name = model.split(":", 1)
+    elif "/" in model and model.split("/")[0] in SUPPORTED_PROVIDERS:
+        provider, model_name = model.split("/", 1)
+    elif model in SUPPORTED_PROVIDERS:
+        provider = model
+        model_name = SUPPORTED_PROVIDERS[provider]["default_model"]
+    else:
+        provider = "openai"
+        model_name = model
+    
+    return f"{provider}:{model_name}"
 
 
 def list_supported_models() -> str:
@@ -572,7 +595,7 @@ def run_coding_agent(
         print(f"{'='*60}")
         print(f"📋 Task: {task}")
         print(f"📁 Workspace: {workspace_path}")
-        print(f"🧠 Model: {model}")
+        print(f"🧠 Model: {resolve_model_string(model)}")
         print(f"{'='*60}\n")
     
     final_response = None
@@ -649,7 +672,7 @@ def chat_with_agent(
     print(f"🤖 VELORUM - Interactive Mode {'(HITL Enabled)' if enable_hitl else ''}")
     print("="*60)
     print(f"📁 Workspace: {workspace_path}")
-    print(f"🧠 Model: {model}")
+    print(f"🧠 Model: {resolve_model_string(model)}")
     print("💡 Type 'quit' or 'exit' to end the session")
     print("💡 Type 'clear' to start a new conversation")
     if enable_hitl:
