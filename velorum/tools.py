@@ -75,7 +75,7 @@ def write_file(file_path: str, content: str) -> str:
         path.parent.mkdir(parents=True, exist_ok=True)
         
         path.write_text(content, encoding='utf-8')
-        return f"✅ Successfully wrote {len(content)} characters to {file_path}"
+        return f"Wrote {len(content)} characters to {file_path}"
     
     except Exception as e:
         return f"Error writing file: {e}"
@@ -114,7 +114,7 @@ def edit_file(file_path: str, old_content: str, new_content: str) -> str:
         new_file_content = content.replace(old_content, new_content, 1)
         path.write_text(new_file_content, encoding='utf-8')
         
-        return f"✅ Successfully edited {file_path}"
+        return f"Edited {file_path}"
     
     except Exception as e:
         return f"Error editing file: {e}"

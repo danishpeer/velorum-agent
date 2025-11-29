@@ -29,7 +29,9 @@ from velorum.ui import (
     print_goodbye,
     print_cleared,
     format_tool_display,
-    DIM, RESET,
+    print_approval_dialog,
+    display_approval_request_and_prompt,
+    DIM, RESET, CYAN, GRAY,
 )
 
 
@@ -305,38 +307,6 @@ def should_continue(state: AgentState) -> Literal["tools", "human_approval", "en
     return "end"
 
 
-def format_tool_call_for_approval(tool_call: dict) -> str:
-    """Format a tool call for human-readable approval request."""
-    name = tool_call['name']
-    args = tool_call['args']
-    
-    if name == "write_file":
-        content_preview = args.get('content', '')[:200]
-        if len(args.get('content', '')) > 200:
-            content_preview += "..."
-        return f"""
-📝 WRITE FILE
-   Path: {args.get('file_path', 'unknown')}
-   Content Preview:
-   {content_preview}
-"""
-    elif name == "edit_file":
-        return f"""
-✏️ EDIT FILE
-   Path: {args.get('file_path', 'unknown')}
-   Replace: {args.get('old_content', '')[:100]}...
-   With: {args.get('new_content', '')[:100]}...
-"""
-    elif name == "run_command":
-        return f"""
-⚡ RUN COMMAND
-   Command: {args.get('command', 'unknown')}
-   Directory: {args.get('working_directory', '.')}
-"""
-    return f"""
-🔧 {name.upper()}
-   Args: {args}
-"""
 
 
 def human_approval_node(state: AgentState) -> dict:
@@ -352,15 +322,11 @@ def human_approval_node(state: AgentState) -> dict:
     if not write_calls:
         return {}
     
-    approval_request = "\n" + "="*60 + "\n"
-    approval_request += "🛑 HUMAN APPROVAL REQUIRED\n"
-    approval_request += "="*60 + "\n"
-    approval_request += "The agent wants to perform the following operation(s):\n"
-    
-    for tc in write_calls:
-        approval_request += format_tool_call_for_approval(tc)
-    
-    approval_request += "\n" + "-"*60
+    # Build a structured approval request that the UI layer will render
+    # We serialize the operations as a marker that the UI can parse
+    import json
+    operations = [{"name": tc["name"], "args": tc.get("args", {})} for tc in write_calls]
+    approval_request = f"__VELORUM_APPROVAL__:{json.dumps(operations)}"
     
     human_response = interrupt(approval_request)
     approved = human_response.lower().strip() in ['y', 'yes', 'approve', 'ok', 'proceed', '1', 'true']
@@ -573,20 +539,24 @@ def run_coding_agent(
                             print_tool_result(last_message.content, max_lines=10, max_chars=300)
                             print()
             
-            state = agent.get_state(config)
+                    state = agent.get_state(config)
             
             if state.next and "human_approval" in state.next:
                 tracker.cleanup()
+                operations = []
                 if state.tasks:
                     for task_obj in state.tasks:
                         if hasattr(task_obj, 'interrupts') and task_obj.interrupts:
                             for intr in task_obj.interrupts:
-                                print(intr.value)
+                                # Parse the structured approval request
+                                if intr.value.startswith("__VELORUM_APPROVAL__:"):
+                                    import json
+                                    ops_json = intr.value.split(":", 1)[1]
+                                    operations = json.loads(ops_json)
                 
-                print("\n" + "-"*60)
-                print("Do you approve this operation? (yes/no): ", end="")
-                human_input = input().strip()
-                print("-"*60 + "\n")
+                # Display the styled approval dialog
+                human_input = display_approval_request_and_prompt(operations)
+                print()
                 current_input = Command(resume=human_input)
             else:
                 break
@@ -675,13 +645,19 @@ def chat_with_agent(
                     
                     if state.next and "human_approval" in state.next:
                         tracker.cleanup()
+                        operations = []
                         if state.tasks:
                             for task_obj in state.tasks:
                                 if hasattr(task_obj, 'interrupts') and task_obj.interrupts:
                                     for intr in task_obj.interrupts:
-                                        print(intr.value)
+                                        # Parse the structured approval request
+                                        if intr.value.startswith("__VELORUM_APPROVAL__:"):
+                                            import json
+                                            ops_json = intr.value.split(":", 1)[1]
+                                            operations = json.loads(ops_json)
                         
-                        approval = print_approval_prompt()
+                        # Display the styled approval dialog
+                        approval = display_approval_request_and_prompt(operations)
                         print()
                         current_input = Command(resume=approval)
                     else:
