@@ -99,7 +99,7 @@ def print_input_prompt() -> str:
     sys.stdout.write(f"{CYAN}╭{border}╮{RESET}\n")
     
     # Print input line with right border, then bottom border
-    padding_space = " " * (width - 6)
+    padding_space = " " * (width - 5)
     sys.stdout.write(f"{CYAN}│{RESET} {BOLD}❯{RESET} {padding_space}{CYAN}│{RESET}\n")
     sys.stdout.write(f"{CYAN}╰{border}╯{RESET}\n")
     
@@ -129,23 +129,35 @@ def print_input_prompt() -> str:
     return user_input.strip()
 
 
-def print_approval_prompt() -> str:
-    """Display styled approval prompt and get response."""
+def print_approval_prompt() -> tuple:
+    """
+    Display styled approval prompt and get response.
+    
+    Returns:
+        Tuple of (user_input, line_count)
+    """
     width = get_terminal_width()
     border = "─" * (width - 2)
     
+    line_count = 0
+    
     # Bottom section with approval input
     print(f"\n{GRADIENT[0]}╭{border}╮{RESET}")
+    line_count += 2  # newline + top border
     
     # Prompt line
     padding_space = " " * (width - 27)
     print(f"{GRADIENT[0]}│{RESET} {WHITE}Approve?{RESET} {DIM}(y/yes or n/no){RESET}{padding_space}{GRADIENT[0]}│{RESET}")
+    line_count += 1
     
     # Input line
     # "│ › " is 4 chars. Right border is 1. Total 5.
     padding_space = " " * (width - 5)
     print(f"{GRADIENT[0]}│{RESET} {BOLD}›{RESET} {padding_space}{GRADIENT[0]}│{RESET}")
+    line_count += 1
+    
     print(f"{GRADIENT[0]}╰{border}╯{RESET}")
+    line_count += 1
     
     # Move cursor back to input line
     sys.stdout.write(f"\033[2A")  # Move up 2 lines
@@ -155,19 +167,7 @@ def print_approval_prompt() -> str:
     # Get input
     user_input = input()
     
-    # After input, move up and grey out the box
-    sys.stdout.write(f"\033[3A")
-    
-    display_input = user_input[:width - 8] if len(user_input) > width - 8 else user_input
-    padding = " " * (width - len(display_input) - 7)
-    
-    # Reprint as greyed out
-    print(f"\033[2K{GRAY}╭{border}╮{RESET}")
-    print(f"\033[2K{GRAY}│ Approve? (y/yes or n/no){' ' * (width - 29)}│{RESET}")
-    print(f"\033[2K{GRAY}│ › {display_input}{padding}│{RESET}")
-    print(f"\033[2K{GRAY}╰{border}╯{RESET}")
-    
-    return user_input.strip()
+    return user_input.strip(), line_count
 
 
 # =============================================================================
@@ -400,21 +400,28 @@ def format_operation_for_approval(tool_name: str, args: Dict[str, Any], width: i
     return lines
 
 
-def print_approval_dialog(operations: List[Dict[str, Any]]) -> None:
+def print_approval_dialog(operations: List[Dict[str, Any]]) -> int:
     """
     Print the styled human approval dialog box.
     
     Args:
         operations: List of dicts with 'name' and 'args' keys for each operation
+    
+    Returns:
+        Number of lines printed (for clearing later)
     """
     width = get_terminal_width()
     border = "═" * (width - 2)
     thin_border = "─" * (width - 2)
     
+    line_count = 0
+    
     print()
+    line_count += 1
     
     # Top border with title
     print(f"{GRADIENT[0]}╔{border}╗{RESET}")
+    line_count += 1
     
     # Title section
     title = "APPROVAL REQUIRED"
@@ -422,6 +429,7 @@ def print_approval_dialog(operations: List[Dict[str, Any]]) -> None:
     title_padding = (width - vis_title_width - 4) // 2
     right_padding = width - vis_title_width - title_padding - 2
     print(f"{GRADIENT[0]}║{RESET}{' ' * title_padding}{YELLOW}{BOLD}{title}{RESET}{' ' * right_padding}{GRADIENT[0]}║{RESET}")
+    line_count += 1
     
     # Subtitle
     subtitle = "The agent wants to perform the following operation(s)"
@@ -429,28 +437,37 @@ def print_approval_dialog(operations: List[Dict[str, Any]]) -> None:
     sub_padding = (width - vis_sub_width - 4) // 2
     right_sub_padding = width - vis_sub_width - sub_padding - 2
     print(f"{GRADIENT[0]}║{RESET}{' ' * sub_padding}{DIM}{subtitle}{RESET}{' ' * right_sub_padding}{GRADIENT[0]}║{RESET}")
+    line_count += 1
     
     # Separator
     print(f"{GRADIENT[0]}╟{RESET}{GRAY}{thin_border}{RESET}{GRADIENT[0]}╢{RESET}")
+    line_count += 1
     
     # Operations
     for i, op in enumerate(operations):
         if i > 0:
             print(f"{GRADIENT[0]}║{RESET}{' ' * (width - 4)}{GRADIENT[0]}║{RESET}")
+            line_count += 1
         
         op_lines = format_operation_for_approval(op['name'], op['args'], width)
         for line in op_lines:
             _print_box_line(line, width, "║", "║", GRADIENT[0])
+            line_count += 1
     
     # Separator
     print(f"{GRADIENT[0]}╟{RESET}{GRAY}{thin_border}{RESET}{GRADIENT[0]}╢{RESET}")
+    line_count += 1
     
     # Instructions
     inst_line = f"{DIM}Type{RESET} {GREEN}y{RESET}{DIM}/{RESET}{GREEN}yes{RESET} {DIM}to approve or{RESET} {RED}n{RESET}{DIM}/{RESET}{RED}no{RESET} {DIM}to reject{RESET}"
     _print_box_line(inst_line, width, "║", "║", GRADIENT[0])
+    line_count += 1
     
     # Bottom border
     print(f"{GRADIENT[0]}╚{border}╝{RESET}")
+    line_count += 1
+    
+    return line_count
 
 
 def build_approval_request(tool_calls: List[Dict[str, Any]]) -> str:
@@ -468,9 +485,43 @@ def build_approval_request(tool_calls: List[Dict[str, Any]]) -> str:
     return "__VELORUM_APPROVAL_REQUEST__"
 
 
+def _format_compact_action_summary(operations: List[Dict[str, Any]]) -> str:
+    """Format a compact summary of operations for display after approval."""
+    summaries = []
+    for op in operations:
+        name = op['name']
+        args = op['args']
+        
+        if name == "write_file":
+            file_path = args.get('file_path', 'unknown')
+            filename = file_path.split("/")[-1] if "/" in file_path else file_path
+            summaries.append(f"write_file({filename})")
+        elif name == "edit_file":
+            file_path = args.get('file_path', 'unknown')
+            filename = file_path.split("/")[-1] if "/" in file_path else file_path
+            summaries.append(f"edit_file({filename})")
+        elif name == "run_command":
+            cmd = args.get('command', 'unknown')
+            cmd_short = cmd[:30] + "..." if len(cmd) > 30 else cmd
+            summaries.append(f"run_command({cmd_short})")
+        else:
+            summaries.append(name)
+    
+    return ", ".join(summaries)
+
+
+def _clear_lines(count: int):
+    """Clear the specified number of lines above the cursor."""
+    for _ in range(count):
+        sys.stdout.write("\033[A")  # Move up one line
+        sys.stdout.write("\033[2K")  # Clear the line
+    sys.stdout.flush()
+
+
 def display_approval_request_and_prompt(operations: List[Dict[str, Any]]) -> str:
     """
     Display the full approval request dialog and get user input.
+    After input is given, hides the dialog and shows a compact action summary.
     
     Args:
         operations: List of operations needing approval
@@ -478,6 +529,30 @@ def display_approval_request_and_prompt(operations: List[Dict[str, Any]]) -> str
     Returns:
         User's approval response
     """
-    print_approval_dialog(operations)
-    return print_approval_prompt()
+    # Print the approval dialog and track line count
+    dialog_lines = print_approval_dialog(operations)
+    
+    # Get user input and track prompt line count
+    user_input, prompt_lines = print_approval_prompt()
+    
+    # Calculate total lines to clear (dialog + prompt)
+    # After input, cursor is on the input line, we need to go down to bottom border first
+    sys.stdout.write("\033[2B")  # Move down 2 lines to get past the prompt box
+    sys.stdout.flush()
+    
+    total_lines = dialog_lines + prompt_lines
+    
+    # Clear all the approval dialog lines
+    _clear_lines(total_lines)
+    
+    # Print a compact summary showing the action info
+    action_summary = _format_compact_action_summary(operations)
+    is_approved = user_input.lower() in ['y', 'yes']
+    
+    if is_approved:
+        print(f"{GREEN}●{RESET} {DIM}Approved:{RESET} {action_summary}")
+    else:
+        print(f"{RED}●{RESET} {DIM}Rejected:{RESET} {action_summary}")
+    
+    return user_input
 

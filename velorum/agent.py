@@ -335,7 +335,7 @@ def human_approval_node(state: AgentState) -> dict:
         return {"human_approved": True}
     else:
         rejection_message = ToolMessage(
-            content=f"❌ Human rejected the operation. Reason: {human_response}",
+            content=f"You rejected the operation. Reason: {human_response}",
             tool_call_id=write_calls[0]['id'] if write_calls else "rejected"
         )
         return {"human_approved": False, "messages": [rejection_message]}
