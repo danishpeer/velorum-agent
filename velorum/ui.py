@@ -395,12 +395,14 @@ def format_tool_display(tool_name: str, args: dict) -> str:
         return f"{tool_name}({filename})"
     elif tool_name == "list_directory" and "path" in args:
         return f"{tool_name}({args['path']})"
-    elif tool_name == "search_codebase" and "query" in args:
-        query = args["query"][:20] + "..." if len(args.get("query", "")) > 20 else args.get("query", "")
-        return f"{tool_name}(\"{query}\")"
     elif tool_name == "run_command" and "command" in args:
         cmd = args["command"][:25] + "..." if len(args.get("command", "")) > 25 else args.get("command", "")
         return f"{tool_name}({cmd})"
+    elif tool_name == "grep" and "pattern" in args:
+        pattern = args["pattern"][:20] + "..." if len(args.get("pattern", "")) > 20 else args.get("pattern", "")
+        path = args.get("path", ".")
+        path_short = path.split("/")[-1] if "/" in path else path
+        return f"{tool_name}(\"{pattern}\", {path_short})"
     
     return tool_name
 

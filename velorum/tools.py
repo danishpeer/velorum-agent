@@ -15,7 +15,7 @@ from langchain_core.tools import tool
 # =============================================================================
 
 # Tools that only read data - no approval needed
-READ_ONLY_TOOLS = {"read_file", "list_directory", "search_codebase", "get_file_structure"}
+READ_ONLY_TOOLS = {"read_file", "list_directory", "get_file_structure", "grep"}
 
 # Tools that modify state - require human approval
 WRITE_TOOLS = {"write_file", "edit_file", "run_command"}
@@ -169,62 +169,6 @@ def list_directory(directory_path: str, pattern: str = "*") -> str:
 
 
 @tool
-def search_codebase(directory: str, pattern: str, file_extensions: str = ".py,.js,.ts,.tsx,.jsx") -> str:
-    """
-    Search for a pattern in the codebase using grep-like functionality.
-    
-    Args:
-        directory: Directory to search in
-        pattern: Text pattern to search for (case-insensitive)
-        file_extensions: Comma-separated file extensions to search (default: .py,.js,.ts,.tsx,.jsx)
-    
-    Returns:
-        Search results with file paths and line numbers
-    """
-    try:
-        path = Path(directory).expanduser()
-        
-        if not path.exists():
-            return f"Error: Directory not found: {directory}"
-        
-        extensions = [ext.strip() for ext in file_extensions.split(',')]
-        results = []
-        
-        for ext in extensions:
-            for file_path in path.rglob(f"*{ext}"):
-                # Skip common non-essential directories
-                if any(skip in str(file_path) for skip in ['node_modules', '__pycache__', '.git', 'venv', '.venv']):
-                    continue
-                
-                try:
-                    content = file_path.read_text(encoding='utf-8')
-                    lines = content.split('\n')
-                    
-                    for i, line in enumerate(lines, 1):
-                        if pattern.lower() in line.lower():
-                            # Truncate long lines
-                            display_line = line.strip()[:100]
-                            if len(line.strip()) > 100:
-                                display_line += "..."
-                            results.append(f"{file_path}:{i}: {display_line}")
-                
-                except (UnicodeDecodeError, PermissionError):
-                    continue
-        
-        if not results:
-            return f"No matches found for '{pattern}' in {directory}"
-        
-        # Limit results
-        if len(results) > 50:
-            return f"Found {len(results)} matches. Showing first 50:\n\n" + '\n'.join(results[:50])
-        
-        return f"Found {len(results)} matches:\n\n" + '\n'.join(results)
-    
-    except Exception as e:
-        return f"Error searching codebase: {e}"
-
-
-@tool
 def run_command(command: str, working_directory: str = ".") -> str:
     """
     Execute a shell command and return its output.
@@ -335,13 +279,179 @@ def get_file_structure(directory: str, max_depth: int = 3) -> str:
         return f"Error building file structure: {e}"
 
 
+@tool
+def grep(pattern: str, path: str, ignore_case: bool = True, context_lines: int = 0, file_pattern: str = "") -> str:
+    """
+    Search for a regex pattern in files using grep/ripgrep.
+    
+    This is a powerful search tool that supports regular expressions.
+    Use this for precise pattern matching in the codebase.
+    
+    Args:
+        pattern: Regular expression pattern to search for
+        path: File or directory path to search in
+        ignore_case: Whether to ignore case (default: True)
+        context_lines: Number of lines to show before/after match (default: 0)
+        file_pattern: Glob pattern for files to include (e.g., "*.py", "*.js")
+    
+    Returns:
+        Matching lines with file paths and line numbers
+    
+    Examples:
+        - grep("def.*init", "./src") - Find all __init__ methods
+        - grep("import.*react", "./", file_pattern="*.tsx") - Find React imports in TSX files
+        - grep("TODO|FIXME", "./") - Find all TODOs and FIXMEs
+    """
+    try:
+        search_path = Path(path).expanduser()
+        
+        if not search_path.exists():
+            return f"Error: Path not found: {path}"
+        
+        # Try ripgrep first (faster), fall back to grep
+        rg_available = subprocess.run(
+            ["which", "rg"], 
+            capture_output=True, 
+            text=True
+        ).returncode == 0
+        
+        if rg_available:
+            cmd = ["rg", "--line-number", "--no-heading", "--color=never"]
+            
+            if ignore_case:
+                cmd.append("--ignore-case")
+            
+            if context_lines > 0:
+                cmd.extend(["-C", str(context_lines)])
+            
+            if file_pattern:
+                cmd.extend(["--glob", file_pattern])
+            
+            # Always ignore common directories
+            cmd.extend([
+                "--glob", "!node_modules",
+                "--glob", "!__pycache__",
+                "--glob", "!.git",
+                "--glob", "!venv",
+                "--glob", "!.venv",
+                "--glob", "!dist",
+                "--glob", "!build"
+            ])
+            
+            cmd.append(pattern)
+            cmd.append(str(search_path))
+        else:
+            # Fall back to grep
+            cmd = ["grep", "-rn"]
+            
+            if ignore_case:
+                cmd.append("-i")
+            
+            if context_lines > 0:
+                cmd.extend(["-C", str(context_lines)])
+            
+            if file_pattern:
+                cmd.extend(["--include", file_pattern])
+            
+            # Exclude common directories
+            cmd.extend([
+                "--exclude-dir=node_modules",
+                "--exclude-dir=__pycache__",
+                "--exclude-dir=.git",
+                "--exclude-dir=venv",
+                "--exclude-dir=.venv"
+            ])
+            
+            cmd.append(pattern)
+            cmd.append(str(search_path))
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        output = result.stdout.strip()
+        
+        if not output:
+            return f"No matches found for pattern '{pattern}' in {path}"
+        
+        # Count and potentially limit results
+        lines = output.split('\n')
+        if len(lines) > 100:
+            return f"Found {len(lines)} matches. Showing first 100:\n\n" + '\n'.join(lines[:100])
+        
+        return f"Found {len(lines)} matches:\n\n" + output
+    
+    except subprocess.TimeoutExpired:
+        return "Error: Search timed out after 30 seconds"
+    except FileNotFoundError:
+        # Neither rg nor grep available, use Python fallback
+        return _python_grep(pattern, path, ignore_case, file_pattern)
+    except Exception as e:
+        return f"Error during grep: {e}"
+
+
+def _python_grep(pattern: str, path: str, ignore_case: bool, file_pattern: str) -> str:
+    """Python fallback for grep when rg/grep are not available."""
+    import re
+    
+    try:
+        search_path = Path(path).expanduser()
+        flags = re.IGNORECASE if ignore_case else 0
+        regex = re.compile(pattern, flags)
+        
+        results = []
+        skip_dirs = {'node_modules', '__pycache__', '.git', 'venv', '.venv', 'dist', 'build'}
+        
+        if search_path.is_file():
+            files = [search_path]
+        else:
+            if file_pattern:
+                files = search_path.rglob(file_pattern)
+            else:
+                files = search_path.rglob("*")
+        
+        for file_path in files:
+            if any(skip in str(file_path) for skip in skip_dirs):
+                continue
+            
+            if not file_path.is_file():
+                continue
+            
+            try:
+                content = file_path.read_text(encoding='utf-8')
+                for i, line in enumerate(content.split('\n'), 1):
+                    if regex.search(line):
+                        display = line.strip()[:150]
+                        if len(line.strip()) > 150:
+                            display += "..."
+                        results.append(f"{file_path}:{i}: {display}")
+            except (UnicodeDecodeError, PermissionError):
+                continue
+        
+        if not results:
+            return f"No matches found for pattern '{pattern}' in {path}"
+        
+        if len(results) > 100:
+            return f"Found {len(results)} matches. Showing first 100:\n\n" + '\n'.join(results[:100])
+        
+        return f"Found {len(results)} matches:\n\n" + '\n'.join(results)
+    
+    except re.error as e:
+        return f"Error: Invalid regex pattern - {e}"
+    except Exception as e:
+        return f"Error during search: {e}"
+
+
 # Collect all tools
 CODING_TOOLS = [
     read_file,
     write_file,
     edit_file,
     list_directory,
-    search_codebase,
+    grep,
     run_command,
     get_file_structure,
 ]
