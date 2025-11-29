@@ -246,30 +246,138 @@ class StepTracker:
 # OUTPUT FORMATTING
 # =============================================================================
 
+OUTPUT_PADDING = "   "  # Left padding for all output
+
 def print_tool_result(content: str, max_lines: int = 5, max_chars: int = 200):
-    """Print tool result with indentation."""
+    """Print tool result with indentation and left padding."""
     lines = content.split("\n")
     if len(lines) > max_lines or len(content) > max_chars:
         line_count = len(lines)
-        print(f"{DIM}└  {line_count} lines{RESET}")
+        print(f"{OUTPUT_PADDING}{DIM}└  {line_count} lines{RESET}")
     else:
         for line in lines[:max_lines]:
-            print(f"{DIM}└  {line}{RESET}")
+            print(f"{OUTPUT_PADDING}{DIM}└  {line}{RESET}")
+
+
+def render_markdown(text: str) -> str:
+    """
+    Render markdown text with terminal ANSI formatting.
+    
+    Supports:
+    - Headers (# ## ###)
+    - Bold (**text**)
+    - Italic (*text*)
+    - Code blocks (```...```)
+    - Inline code (`code`)
+    - Lists (-, *, numbered)
+    - Blockquotes (>)
+    """
+    import re
+    
+    lines = text.split('\n')
+    result = []
+    in_code_block = False
+    code_block_lines = []
+    
+    for line in lines:
+        # Handle code blocks
+        if line.strip().startswith('```'):
+            if in_code_block:
+                # End of code block - render collected lines
+                for code_line in code_block_lines:
+                    result.append(f"  {DIM}{code_line}{RESET}")
+                code_block_lines = []
+                in_code_block = False
+            else:
+                # Start of code block
+                in_code_block = True
+            continue
+        
+        if in_code_block:
+            code_block_lines.append(line)
+            continue
+        
+        # Headers
+        if line.startswith('### '):
+            result.append(f"{CYAN}{BOLD}{line[4:]}{RESET}")
+            continue
+        elif line.startswith('## '):
+            result.append(f"{MAGENTA}{BOLD}{line[3:]}{RESET}")
+            continue
+        elif line.startswith('# '):
+            result.append(f"{YELLOW}{BOLD}{line[2:]}{RESET}")
+            continue
+        
+        # Blockquotes
+        if line.startswith('> '):
+            result.append(f"  {GRAY}│{RESET} {ITALIC}{line[2:]}{RESET}")
+            continue
+        
+        # Unordered lists
+        list_match = re.match(r'^(\s*)[-*]\s+(.+)$', line)
+        if list_match:
+            indent = list_match.group(1)
+            content = list_match.group(2)
+            content = _format_inline_markdown(content)
+            result.append(f"{indent}  {CYAN}•{RESET} {content}")
+            continue
+        
+        # Ordered lists
+        ordered_match = re.match(r'^(\s*)(\d+)\.\s+(.+)$', line)
+        if ordered_match:
+            indent = ordered_match.group(1)
+            num = ordered_match.group(2)
+            content = ordered_match.group(3)
+            content = _format_inline_markdown(content)
+            result.append(f"{indent}  {CYAN}{num}.{RESET} {content}")
+            continue
+        
+        # Regular line - apply inline formatting
+        result.append(_format_inline_markdown(line))
+    
+    # Handle unclosed code block
+    if in_code_block:
+        for code_line in code_block_lines:
+            result.append(f"  {DIM}{code_line}{RESET}")
+    
+    return '\n'.join(result)
+
+
+def _format_inline_markdown(text: str) -> str:
+    """Apply inline markdown formatting (bold, italic, code)."""
+    import re
+    
+    # Inline code (must be done first to avoid conflicts)
+    text = re.sub(r'`([^`]+)`', f'{CYAN}\\1{RESET}', text)
+    
+    # Bold
+    text = re.sub(r'\*\*([^*]+)\*\*', f'{BOLD}\\1{RESET}', text)
+    
+    # Italic (single asterisks, but not inside words)
+    text = re.sub(r'(?<!\w)\*([^*]+)\*(?!\w)', f'{ITALIC}\\1{RESET}', text)
+    
+    # Links [text](url) -> text (url)
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', f'{CYAN}\\1{RESET} {DIM}(\\2){RESET}', text)
+    
+    return text
 
 
 def print_agent_response(content: str):
-    """Print agent's response."""
-    print(f"\n{content}\n")
+    """Print agent's response with markdown formatting and left padding."""
+    formatted = render_markdown(content)
+    # Add left padding to each line
+    padded_lines = [f"{OUTPUT_PADDING}{line}" for line in formatted.split('\n')]
+    print(f"\n{chr(10).join(padded_lines)}\n")
 
 
 def print_goodbye():
     """Print goodbye message."""
-    print(f"\n{DIM}Goodbye!{RESET}")
+    print(f"\n{OUTPUT_PADDING}{DIM}Goodbye!{RESET}")
 
 
 def print_cleared():
     """Print conversation cleared message."""
-    print(f"{DIM}Conversation cleared.{RESET}\n")
+    print(f"{OUTPUT_PADDING}{DIM}Conversation cleared.{RESET}\n")
 
 
 def format_tool_display(tool_name: str, args: dict) -> str:

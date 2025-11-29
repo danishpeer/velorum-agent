@@ -47,8 +47,13 @@ GRADIENT_COLORS = [
 RESET = "\033[0m"
 BOLD = "\033[1m"
 DIM = "\033[2m"
+ITALIC = "\033[3m"
 YELLOW = "\033[1;33m"
 CYAN = "\033[1;36m"
+MAGENTA = "\033[1;35m"
+GREEN = "\033[1;32m"
+WHITE = "\033[1;37m"
+GRAY = "\033[90m"
 
 
 def get_terminal_width() -> int:
@@ -121,18 +126,91 @@ def print_session_header(
     print_banner(subtitle=subtitle)
     
     width = get_terminal_width()
-    info_width = min(60, width - 4)
+    info_width = min(70, width - 4)
     
-    # Print info box
-    print(f"{'─' * info_width}")
-    print(f"  📁 Workspace: {workspace}")
-    print(f"  🧠 Model: {model}")
-    if mode == "Interactive":
-        print(f"  💡 Type 'quit' or 'exit' to end the session")
-        print(f"  💡 Type 'clear' to start a new conversation")
+    # Calculate max value width (box width - borders - icon - label - padding)
+    # Format: "│ ▸ Label   value" = 1 + 1 + 1 + 1 + label_len + 2 + value
+    max_label_len = 9  # "Workspace" is the longest label
+    max_value_width = info_width - 7 - max_label_len
+    
+    # Truncate workspace path if too long
+    def truncate_path(path: str, max_len: int) -> str:
+        if len(path) <= max_len:
+            return path
+        # Show .../ + last parts of path
+        parts = path.split('/')
+        result = parts[-1]  # Start with filename/last dir
+        for part in reversed(parts[:-1]):
+            candidate = f"{part}/{result}"
+            if len(candidate) + 4 > max_len:  # 4 for ".../"
+                break
+            result = candidate
+        return f".../{result}" if len(result) < len(path) else path[:max_len-3] + "..."
+    
+    workspace_display = truncate_path(workspace, max_value_width)
+    
+    # Build info lines
+    info_lines = []
+    
+    # Workspace
+    info_lines.append((f"{GRADIENT_COLORS[0]}▸{RESET}", "Workspace", workspace_display))
+    
+    # Model
+    info_lines.append((f"{GRADIENT_COLORS[1]}▸{RESET}", "Model", model))
+    
+    # Mode indicator
+    mode_color = GREEN if mode == "Interactive" else MAGENTA
+    info_lines.append((f"{GRADIENT_COLORS[2]}▸{RESET}", "Mode", f"{mode_color}{mode}{RESET}"))
+    
+    # HITL status
     if hitl_enabled:
-        print(f"  🛡️  Write operations require your approval")
-    print(f"{'─' * info_width}\n")
+        info_lines.append((f"{GRADIENT_COLORS[1]}▸{RESET}", "Safety", f"{GREEN}HITL Enabled{RESET} {DIM}(write ops require approval){RESET}"))
+    else:
+        info_lines.append((f"{GRADIENT_COLORS[1]}▸{RESET}", "Safety", f"{YELLOW}HITL Disabled{RESET}"))
+    
+    # Calculate the longest label for alignment
+    label_len = max(len(label) for _, label, _ in info_lines)
+    
+    # Print styled info box
+    border_char = "─"
+    corner_tl, corner_tr = "╭", "╮"
+    corner_bl, corner_br = "╰", "╯"
+    side = "│"
+    
+    # Calculate center padding
+    center_pad = " " * max(0, (width - info_width) // 2)
+    
+    # Helper to calculate visible length (strips ANSI codes)
+    import re
+    def visible_len(s: str) -> int:
+        return len(re.sub(r'\033\[[0-9;]*m', '', s))
+    
+    # Helper to pad line to fit box with right border
+    def box_line(content: str) -> str:
+        vis_len = visible_len(content)
+        padding = info_width - 2 - vis_len  # -2 for left and right borders
+        if padding < 0:
+            padding = 0
+        return f"{center_pad}{GRAY}{side}{RESET}{content}{' ' * padding}{GRAY}{side}{RESET}"
+    
+    # Top border
+    print(f"{center_pad}{GRAY}{corner_tl}{border_char * (info_width - 2)}{corner_tr}{RESET}")
+    
+    # Content lines
+    for icon, label, value in info_lines:
+        label_padded = label.ljust(label_len)
+        line_content = f" {icon} {DIM}{label_padded}{RESET}  {value}"
+        print(box_line(line_content))
+    
+    # Separator before hints (if interactive mode)
+    if mode == "Interactive":
+        print(box_line(""))
+        hint_content = f"   {DIM}Commands:{RESET} {CYAN}quit{RESET}{DIM}/{RESET}{CYAN}exit{RESET} {DIM}to end{RESET}  {DIM}•{RESET}  {CYAN}clear{RESET} {DIM}for new conversation{RESET}"
+        print(box_line(hint_content))
+    
+    # Bottom border
+    print(f"{center_pad}{GRAY}{corner_bl}{border_char * (info_width - 2)}{corner_br}{RESET}")
+    print()
 
 
 class VelorumSplash:
