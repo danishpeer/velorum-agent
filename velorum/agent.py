@@ -6,9 +6,6 @@ Main agent module with LLM configuration and StateGraph implementation.
 """
 
 import os
-import sys
-import threading
-import itertools
 import time
 from typing import Annotated, Literal, Optional
 
@@ -22,7 +19,18 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from velorum.tools import CODING_TOOLS, READ_ONLY_TOOLS, WRITE_TOOLS
-from velorum.banner import print_banner, print_session_header, show_splash
+from velorum.banner import print_session_header
+from velorum.ui import (
+    StepTracker,
+    print_input_prompt,
+    print_approval_prompt,
+    print_tool_result,
+    print_agent_response,
+    print_goodbye,
+    print_cleared,
+    format_tool_display,
+    DIM, RESET,
+)
 
 
 # =============================================================================
@@ -212,77 +220,6 @@ def list_supported_models() -> str:
             lines.append(f"    - {provider}:{model}")
     
     return "\n".join(lines)
-
-
-# =============================================================================
-# SPINNER UTILITY
-# =============================================================================
-
-class Spinner:
-    """A simple CLI spinner that shows activity while waiting."""
-    
-    FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-    
-    def __init__(self, message: str = "", delay: float = 0.1):
-        self.message = message
-        self.delay = delay
-        self._stop_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
-        self._last_line_length = 0
-    
-    def _spin(self):
-        for frame in itertools.cycle(self.FRAMES):
-            if self._stop_event.is_set():
-                break
-            line = f"\r{frame} {self.message}"
-            sys.stdout.write(line)
-            sys.stdout.flush()
-            self._last_line_length = len(line)
-            time.sleep(self.delay)
-    
-    def start(self):
-        if self._thread is None or not self._thread.is_alive():
-            self._stop_event.clear()
-            self._thread = threading.Thread(target=self._spin, daemon=True)
-            self._thread.start()
-    
-    def stop(self, success: bool = True, final_message: str = None):
-        self._stop_event.set()
-        if self._thread:
-            self._thread.join(timeout=0.5)
-        sys.stdout.write("\r" + " " * (self._last_line_length + 10) + "\r")
-        if final_message:
-            icon = "✅" if success else "❌"
-            sys.stdout.write(f"{icon} {final_message}\n")
-        sys.stdout.flush()
-
-
-class StepTracker:
-    """Tracks and displays steps with spinners and completion status."""
-    
-    def __init__(self, verbose: bool = True):
-        self.verbose = verbose
-        self.current_spinner: Optional[Spinner] = None
-    
-    def start_step(self, message: str):
-        if not self.verbose:
-            return
-        if self.current_spinner:
-            self.current_spinner.stop(success=True, final_message=None)
-        self.current_spinner = Spinner(message)
-        self.current_spinner.start()
-    
-    def complete_step(self, message: str = None, success: bool = True):
-        if not self.verbose:
-            return
-        if self.current_spinner:
-            final_msg = message or self.current_spinner.message
-            self.current_spinner.stop(success=success, final_message=final_msg)
-            self.current_spinner = None
-    
-    def cleanup(self):
-        if self.current_spinner:
-            self.current_spinner.stop(success=True, final_message=None)
 
 
 # =============================================================================
@@ -603,6 +540,7 @@ def run_coding_agent(
     final_response = None
     current_input = initial_state
     current_tool_name = None
+    current_tool_args = None
     
     try:
         while True:
@@ -614,26 +552,26 @@ def run_coding_agent(
                     
                     if isinstance(last_message, AIMessage):
                         if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
-                            tracker.complete_step("Analyzed task", success=True)
+                            tracker.cleanup()
                             for tc in last_message.tool_calls:
                                 current_tool_name = tc['name']
-                                tracker.start_step(f"Running {tc['name']}...")
+                                current_tool_args = tc.get('args', {})
+                                tracker.start_step(f"{current_tool_name}...")
                         elif last_message.content:
                             tracker.cleanup()
-                            print(f"\n🤖 Agent: {last_message.content}\n")
+                            print_agent_response(last_message.content)
                             final_response = last_message.content
                     
                     elif isinstance(last_message, ToolMessage):
                         tool_name = last_message.name or current_tool_name or "tool"
                         is_success = not last_message.content.startswith("Error")
-                        tracker.complete_step(f"{tool_name}", success=is_success)
+                        
+                        tool_display = format_tool_display(tool_name, current_tool_args)
+                        tracker.complete_step(tool_display, success=is_success)
                         
                         if verbose:
-                            content = last_message.content
-                            if len(content) > 300:
-                                content = content[:300] + "\n   ... [truncated]"
-                            indented = "\n".join(f"   {line}" for line in content.split("\n")[:10])
-                            print(f"   📤 {indented}\n")
+                            print_tool_result(last_message.content, max_lines=10, max_chars=300)
+                            print()
             
             state = agent.get_state(config)
             
@@ -682,20 +620,20 @@ def chat_with_agent(
     
     while True:
         try:
-            user_input = input("You: ").strip()
+            user_input = print_input_prompt()
             
             if not user_input:
                 continue
             
             if user_input.lower() in ['quit', 'exit']:
-                print("\n👋 Goodbye!")
+                print_goodbye()
                 break
             
             if user_input.lower() == 'clear':
                 messages = []
                 thread_id = f"interactive-session-{int(time.time())}"
                 config = {"configurable": {"thread_id": thread_id}}
-                print("🔄 Conversation cleared!\n")
+                print_cleared()
                 continue
             
             messages.append(HumanMessage(content=user_input))
@@ -703,6 +641,7 @@ def chat_with_agent(
             
             print()
             current_tool_name = None
+            current_tool_args = None
             
             try:
                 while True:
@@ -714,25 +653,23 @@ def chat_with_agent(
                             
                             if isinstance(last_message, AIMessage):
                                 if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
-                                    tracker.complete_step("Analyzed", success=True)
+                                    tracker.cleanup()
                                     for tc in last_message.tool_calls:
                                         current_tool_name = tc['name']
-                                        tracker.start_step(f"Running {tc['name']}...")
+                                        current_tool_args = tc.get('args', {})
+                                        tracker.start_step(f"{current_tool_name}...")
                                 elif last_message.content:
                                     tracker.cleanup()
-                                    print(f"🤖 Agent: {last_message.content}")
+                                    print_agent_response(last_message.content)
                                     messages.append(last_message)
                             
                             elif isinstance(last_message, ToolMessage):
                                 tool_name = last_message.name or current_tool_name or "tool"
                                 is_success = not last_message.content.startswith("Error")
-                                tracker.complete_step(f"{tool_name}", success=is_success)
                                 
-                                content = last_message.content
-                                if len(content) > 200:
-                                    content = content[:200] + "..."
-                                indented = "\n".join(f"   {line}" for line in content.split("\n")[:5])
-                                print(f"   📤 {indented}")
+                                tool_display = format_tool_display(tool_name, current_tool_args)
+                                tracker.complete_step(tool_display, success=is_success)
+                                print_tool_result(last_message.content)
                     
                     state = agent.get_state(config)
                     
@@ -744,8 +681,7 @@ def chat_with_agent(
                                     for intr in task_obj.interrupts:
                                         print(intr.value)
                         
-                        print("Do you approve? (yes/no): ", end="")
-                        approval = input().strip()
+                        approval = print_approval_prompt()
                         print()
                         current_input = Command(resume=approval)
                     else:
@@ -757,6 +693,6 @@ def chat_with_agent(
             
         except KeyboardInterrupt:
             tracker.cleanup()
-            print("\n\n👋 Goodbye!")
+            print_goodbye()
             break
 
