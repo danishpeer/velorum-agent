@@ -22,6 +22,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from velorum.tools import CODING_TOOLS, READ_ONLY_TOOLS, WRITE_TOOLS
+from velorum.banner import print_banner, print_session_header, show_splash
 
 
 # =============================================================================
@@ -590,13 +591,14 @@ def run_coding_agent(
     }
     
     if verbose:
-        print(f"\n{'='*60}")
-        print(f"🤖 VELORUM {'(HITL Enabled)' if enable_hitl else ''}")
-        print(f"{'='*60}")
-        print(f"📋 Task: {task}")
-        print(f"📁 Workspace: {workspace_path}")
-        print(f"🧠 Model: {resolve_model_string(model)}")
-        print(f"{'='*60}\n")
+        # Show ASCII art banner as title
+        print_session_header(
+            mode="Task",
+            workspace=workspace_path,
+            model=resolve_model_string(model),
+            hitl_enabled=enable_hitl
+        )
+        print(f"📋 Task: {task}\n")
     
     final_response = None
     current_input = initial_state
@@ -617,7 +619,7 @@ def run_coding_agent(
                                 current_tool_name = tc['name']
                                 tracker.start_step(f"Running {tc['name']}...")
                         elif last_message.content:
-                            tracker.complete_step("Done", success=True)
+                            tracker.cleanup()
                             print(f"\n🤖 Agent: {last_message.content}\n")
                             final_response = last_message.content
                     
@@ -668,16 +670,13 @@ def chat_with_agent(
     config = {"configurable": {"thread_id": thread_id}}
     tracker = StepTracker(verbose=True)
     
-    print("\n" + "="*60)
-    print(f"🤖 VELORUM - Interactive Mode {'(HITL Enabled)' if enable_hitl else ''}")
-    print("="*60)
-    print(f"📁 Workspace: {workspace_path}")
-    print(f"🧠 Model: {resolve_model_string(model)}")
-    print("💡 Type 'quit' or 'exit' to end the session")
-    print("💡 Type 'clear' to start a new conversation")
-    if enable_hitl:
-        print("🛡️  Write operations require your approval")
-    print("="*60 + "\n")
+    # Show ASCII art banner as title
+    print_session_header(
+        mode="Interactive",
+        workspace=workspace_path,
+        model=resolve_model_string(model),
+        hitl_enabled=enable_hitl
+    )
     
     messages = []
     
@@ -720,7 +719,7 @@ def chat_with_agent(
                                         current_tool_name = tc['name']
                                         tracker.start_step(f"Running {tc['name']}...")
                                 elif last_message.content:
-                                    tracker.complete_step("Done", success=True)
+                                    tracker.cleanup()
                                     print(f"🤖 Agent: {last_message.content}")
                                     messages.append(last_message)
                             
