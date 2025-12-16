@@ -30,6 +30,12 @@ from velorum.agent import (
     SUPPORTED_PROVIDERS,
 )
 
+from velorum.banner import (
+    print_banner,
+    print_session_header,
+    show_splash,
+)
+
 from velorum.tools import (
     read_file,
     write_file,
@@ -52,6 +58,9 @@ __all__ = [
     "chat_with_agent",
     "get_llm",
     "list_supported_models",
+    "print_banner",
+    "print_session_header",
+    "show_splash",
     # Tools
     "read_file",
     "write_file",
